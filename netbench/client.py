@@ -6,7 +6,8 @@ prints each metric with PASS/FAIL.
   python -m netbench.client --network home-wifi --test cyclic_udp
   python -m netbench.client --network uni-net --host <server-ip>
 
-Every run is saved as a JSON record in ./results/.
+Every run is saved as a JSON record in ./results/ and, if NETBENCH_API_URL
+and NETBENCH_API_KEY are set, uploaded to the backend (see upload.py).
 """
 import argparse
 import asyncio
@@ -16,6 +17,7 @@ import time
 from netbench import protocol as p
 from netbench import results
 from netbench.profiles import PROFILES, evaluate
+from netbench.upload import upload_pending
 
 
 # ---------- statistics helpers ----------
@@ -162,19 +164,12 @@ async def run_bulk_tcp(host, port, n_bytes, timeout_s=60.0):
 RUNNERS = {"cyclic_udp": run_cyclic_udp, "reqresp_tcp": run_reqresp_tcp, "bulk_tcp": run_bulk_tcp}
 
 
-def print_result(name, metrics, passed, checks):
-    print(f"\n=== {name}: {'PASS' if passed else 'FAIL'} ===")
-    checked = {c[0]: c for c in checks}
-    for key, value in metrics.items():
-        shown = f"{value:.3f}" if isinstance(value, float) else str(value)
-        line = f"{key:>16}: {shown}"
-        if key in checked:
-            _, _, op, limit, ok = checked[key]
-            line += f"   (needs {op} {limit})  {'ok' if ok else 'FAIL'}"
-        print(line)
+async def run_benchmark(host, port, network, tests, duration=None, on_test_done=None):
+    """Run the given tests and return the run record. Used by the CLI and the web UI.
 
-
-async def main(host, port, tests, duration, network):
+    on_test_done(entry) is called after each test, so a caller can show
+    progress while the run is still going.
+    """
     record = results.new_record(network, host, port)
     for name in tests:
         profile = PROFILES[name]
@@ -185,16 +180,44 @@ async def main(host, port, tests, duration, network):
             metrics = await RUNNERS[name](host, port, **params)
         except (OSError, RuntimeError) as e:
             # A test that can't even run is a result too: record it as a failure.
-            print(f"\n=== {name}: ERROR === {e}")
             record["tests"].append({"test": name, "params": params, "error": str(e), "passed": False})
-            continue
-        samples = metrics.pop("samples_ms", None)
-        passed, checks = evaluate(name, metrics)
-        print_result(name, metrics, passed, checks)
-        results.add_test(record, name, params, profile["thresholds"], metrics, samples, passed, checks)
+        else:
+            samples = metrics.pop("samples_ms", None)
+            passed, checks = evaluate(name, metrics)
+            results.add_test(record, name, params, profile["thresholds"], metrics, samples, passed, checks)
+        if on_test_done:
+            on_test_done(record["tests"][-1])
+    return record
 
+
+def nothing_reached_server(record):
+    """True if every test errored: almost always a setup problem, not a network result."""
+    return all("error" in t for t in record["tests"])
+
+
+def print_test(entry):
+    if "error" in entry:
+        print(f"\n=== {entry['test']}: ERROR === {entry['error']}")
+        return
+    print(f"\n=== {entry['test']}: {'PASS' if entry['passed'] else 'FAIL'} ===")
+    for key, value in entry["metrics"].items():
+        line = f"{key:>16}: {value:.3f}" if isinstance(value, float) else f"{key:>16}: {value}"
+        if key in entry["thresholds"]:
+            op, limit = entry["thresholds"][key]
+            line += f"   (needs {op} {limit})  {'FAIL' if key in entry['failed_checks'] else 'ok'}"
+        print(line)
+
+
+async def main(host, port, tests, duration, network, save_unreachable):
+    record = await run_benchmark(host, port, network, tests, duration, on_test_done=print_test)
+
+    if nothing_reached_server(record) and not save_unreachable:
+        print("\nNo test reached the server, so this run was NOT saved. Is the server running?"
+              "\n(If the network really blocks everything, re-run with --save-unreachable to keep it as a result.)")
+        return
     path = results.save(record)
     print(f"\nSaved run {record['run_id']} -> {path}")
+    upload_pending()  # uploads this run plus any earlier ones that failed to upload
 
 
 if __name__ == "__main__":
@@ -204,6 +227,8 @@ if __name__ == "__main__":
     parser.add_argument("--test", default="all", choices=["all", *PROFILES])
     parser.add_argument("--duration", type=float, help="override cyclic test length in seconds")
     parser.add_argument("--network", required=True, help='label for the network under test, e.g. "home-wifi"')
+    parser.add_argument("--save-unreachable", action="store_true",
+                        help="save the run even if no test reached the server")
     args = parser.parse_args()
     tests = list(PROFILES) if args.test == "all" else [args.test]
-    asyncio.run(main(args.host, args.port, tests, args.duration, args.network))
+    asyncio.run(main(args.host, args.port, tests, args.duration, args.network, args.save_unreachable))

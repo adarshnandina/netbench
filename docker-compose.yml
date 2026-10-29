@@ -1,0 +1,37 @@
+# NetBench backend: API + database.
+#   docker compose up --build      start (add -d to run in the background)
+#   docker compose down            stop (data stays in the pgdata volume)
+#   docker compose down -v         stop AND delete all stored data
+#
+# Secrets come from a .env file next to this one (see .env.example).
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: netbench
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: netbench
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # survives container restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netbench"]
+      interval: 2s
+      retries: 15
+    # No "ports:" on purpose: the database is reachable only by the api
+    # container on Docker's internal network, never from outside.
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://netbench:${POSTGRES_PASSWORD}@db:5432/netbench
+      NETBENCH_API_KEY: ${NETBENCH_API_KEY:?set NETBENCH_API_KEY in .env}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy   # wait until Postgres accepts connections
+    restart: unless-stopped
+
+volumes:
+  pgdata:

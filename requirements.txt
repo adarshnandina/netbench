@@ -1,0 +1,6 @@
+# Only needed for the web UI and the analysis. The measurement client and
+# server use the Python standard library only.
+streamlit==1.66.1
+pandas==3.0.5
+numpy==2.5.3
+scipy==1.18.1

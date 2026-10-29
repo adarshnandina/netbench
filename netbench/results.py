@@ -50,10 +50,9 @@ def _r(value):
     return round(value, 3) if isinstance(value, float) else value
 
 
-def save(record, out_dir=None):
-    base_dir = Path(__file__).resolve().parent
-    out = base_dir / out_dir if out_dir else base_dir / "results"
-    out.mkdir(parents=True, exist_ok=True)
+def save(record, out_dir="results"):
+    out = Path(out_dir)
+    out.mkdir(exist_ok=True)
     stamp = record["started_at"].replace(":", "").replace("+0000", "Z")
     safe_net = "".join(c if c.isalnum() or c in "-_" else "_" for c in record["network"])
     path = out / f"{stamp}_{safe_net}.json"
