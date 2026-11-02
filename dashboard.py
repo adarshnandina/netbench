@@ -11,6 +11,7 @@ so the code reads like a normal script. Anything slow (like API calls) is
 cached with @st.cache_data so it doesn't run again on every click.
 """
 import asyncio
+import os
 
 import altair as alt
 import pandas as pd
@@ -120,7 +121,7 @@ with run_tab:
     network = c1.text_input("Network under test", placeholder="e.g. home-wifi",
                             help="Use the same label every time you test this network. "
                                  f"Known: {', '.join(known) or 'none yet'}")
-    host = c2.text_input("Measurement server", value="127.0.0.1")
+    host = c2.text_input("Measurement server", value=os.environ.get("NETBENCH_SERVER", "127.0.0.1"))
     port = c3.number_input("Port", value=9000, step=1)
 
     c4, c5 = st.columns([3, 2])

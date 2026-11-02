@@ -1,9 +1,17 @@
-# NetBench backend: API + database.
-#   docker compose up --build      start (add -d to run in the background)
+# NetBench: API + database, and on the Azure VM also the measurement server and HTTPS.
+#
+#   docker compose up --build -d   build and start in the background
+#   docker compose ps              what's running (is db "healthy"?)
+#   docker compose logs -f api     follow one service's logs
 #   docker compose down            stop (data stays in the pgdata volume)
 #   docker compose down -v         stop AND delete all stored data
 #
-# Secrets come from a .env file next to this one (see .env.example).
+# Two setups from one file, chosen with a "profile":
+#   On your Mac (development): only db + api start.
+#   On the Azure VM: .env contains COMPOSE_PROFILES=prod, which also starts
+#   "measure" (the UDP/TCP measurement server) and "caddy" (HTTPS in front of the API).
+#
+# Secrets and settings come from a .env file next to this one (see .env.example).
 
 services:
   db:
@@ -18,8 +26,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U netbench"]
       interval: 2s
       retries: 15
-    # No "ports:" on purpose: the database is reachable only by the api
-    # container on Docker's internal network, never from outside.
+    restart: unless-stopped
+    # No "ports:" on purpose: only the api container can reach the database.
 
   api:
     build: ./backend
@@ -27,11 +35,44 @@ services:
       DATABASE_URL: postgresql://netbench:${POSTGRES_PASSWORD}@db:5432/netbench
       NETBENCH_API_KEY: ${NETBENCH_API_KEY:?set NETBENCH_API_KEY in .env}
     ports:
-      - "8000:8000"
+      # Bound to 127.0.0.1: reachable from this machine only. On your Mac that's
+      # all you need; on the VM, the outside world reaches the API through caddy.
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy   # wait until Postgres accepts connections
     restart: unless-stopped
 
+  # ---------- production only (profile "prod") ----------
+
+  measure:
+    # The UDP echo + TCP measurement server, built from the Dockerfile in the project root.
+    build: .
+    # Use the VM's network directly instead of Docker's NAT, so no extra
+    # translation step sits in the path we are measuring. Ports: 9000 TCP + UDP.
+    network_mode: host
+    restart: unless-stopped
+    profiles: [prod]
+
+  caddy:
+    # Reverse proxy: terminates HTTPS on 443 and forwards to the api container.
+    # Caddy gets and renews a free Let's Encrypt certificate automatically.
+    image: caddy:2-alpine
+    ports:
+      - "80:80"     # needed for the certificate challenge and the http->https redirect
+      - "443:443"
+    environment:
+      NETBENCH_DOMAIN: ${NETBENCH_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificates: keep them, or Let's Encrypt rate limits hit on rebuilds
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+    profiles: [prod]
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:

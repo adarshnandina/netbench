@@ -1,0 +1,9 @@
+# Caddy configuration: serve the NetBench API over HTTPS.
+# {$NETBENCH_DOMAIN} is read from the environment (set in .env on the VM),
+# e.g. netbench-adarsh.germanywestcentral.cloudapp.azure.com
+# Because a real domain name is given, Caddy automatically obtains a
+# Let's Encrypt certificate for it and redirects http:// to https://.
+
+{$NETBENCH_DOMAIN} {
+	reverse_proxy api:8000
+}

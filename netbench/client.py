@@ -11,6 +11,7 @@ and NETBENCH_API_KEY are set, uploaded to the backend (see upload.py).
 """
 import argparse
 import asyncio
+import os
 import statistics
 import time
 
@@ -222,7 +223,8 @@ async def main(host, port, tests, duration, network, save_unreachable):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default=os.environ.get("NETBENCH_SERVER", "127.0.0.1"),
+                        help="measurement server (default: $NETBENCH_SERVER or 127.0.0.1)")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--test", default="all", choices=["all", *PROFILES])
     parser.add_argument("--duration", type=float, help="override cyclic test length in seconds")
